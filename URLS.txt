@@ -1,0 +1,33 @@
+Red Hat YouTube vSphere install video
+https://www.youtube.com/watch?v=Be0dRq0wjWE&list=PLxYT7ZopjsB3iq32lWYnZAJV1y7qo3Z74
+
+Red Hat Console
+https://console.redhat.com
+
+Downloads:
+-OC CLI
+https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz
+
+-OpenShift Installer
+https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-install-linux.tar.gz
+
+-Red Hat clients
+https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/
+
+-Mirror Registry
+https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/mirror-registry/
+
+-Helm
+https://mirror.openshift.com/pub/openshift-v4/clients/helm/
+
+-CoreOS Installer
+https://mirror.openshift.com/pub/openshift-v4/clients/coreos-installer/
+
+-Butane
+https://mirror.openshift.com/pub/openshift-v4/clients/butane/
+
+-RHCOS
+https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.14/latest/
+
+-RHEL 9
+https://developers.redhat.com/products/rhel/download#rhel-new-product-download-list-61451

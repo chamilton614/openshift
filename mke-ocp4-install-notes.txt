@@ -1,0 +1,407 @@
+
+*******************************************************
+Prerequisites - Environment
+*******************************************************
+1. Build Blank VMs just hardware sizing and no OS - bootstrap, master1, master2, master3, LB, NFS
+Requires these Advanced Parameters
+guestinfo.ignition.config.data.encoding = base64
+disk.EnableUUID = TRUE
+stealclock.enable = TRUE
+
+2. Install RHEL 9 or equivalent on LB and NFS
+
+3. Update Hostname and base packages on LB and NFS VMs
+hostnamectl hostname ocplb.example.com
+reboot
+hostnamectl hostname ocpnfs.example.com
+reboot
+
+sudo -i
+dnf update -y
+dnf update --security -y
+reboot
+
+4. Install packages on LB and NFS VMs
+sudo -i
+dnf install -y git vim
+dnf install -y epel-release
+dnf install -y elrepo-release
+dnf update -y
+
+5. Install firewalld on LB and NFS VMs
+dnf install -y firewalld
+systemctl enable firewalld
+systemctl start firewalld
+reboot
+
+6. Set Static IP addresses on LB and NFS VMs
+set static ip, subnet, gateway and DNS servers
+nmtui
+ip address/subnet
+gateway
+dns servers
+enable require IPv4 addressing
+disable require IPv6 addressing
+reboot
+
+7. Make sure Admin User is a sudoer on LB and NFS VMs
+#check that wheel group is enabled
+sudo cat /etc/sudoers
+#check that user is member of wheel group
+id
+
+8. Create Domain Name and DNS Entries in router/pihole
+DNS A/AAAA or CNAME Records
+
+e.g. cluster-id = ocp4, base-domain = example.com
+map the helper/lb, api, api-int, wildcard to LB/Helper IP
+map the bootstrap, control plane, compute, other misc. to their own IP
+******
+*NOTE* Home network setups this can be done with A/CNAME and wildcards in Pihole
+******
+
+helper/lb.<cluster-id>.<base-domain>
+helper/lb.<base-domain>
+
+bootstrap.<cluster-id>.<base-domain>
+<control-plane><n>.<cluster-id>.<base-domain>
+<compute><n>.<cluster-id>.<base-domain>
+
+<other>.<cluster-id>.<base-domain>
+
+#Below entries handled by Pihole dnsmasq.d wildcard - ocp4.example.com
+#Otherwise, need entered into DNS zone file
+api.<cluster-id>.<base-domain>
+api-int.<cluster-id>.<base-domain>
+*.apps.<cluster-id>.<base-domain> (wildcard)
+
+9. Verify the DNS Records
+dig +noall +answer @<name-server> api.<cluster-id>.<base-domain>
+dig +noall +answer @<name-server> api-int.<cluster-id>.<base-domain>
+dig +noall +answer @<name-server> random.apps.<cluster-id>.<base-domain>
+dig +noall +answer @<name-server> bootstrap.<cluster-id>.<base-domain>
+
+*******************************************************
+Helper Node Prerequisites
+*******************************************************
+Helper Node / LB - connect as sudo user not root
+1. Create openshift directory
+mkdir openshift
+cd openshift
+
+2. Copy the software 
+winscp to copy the openshift-install, openshift-client, rhcos-*-live-initramfs.x86_64.img, rhcos-*-live-kernel-x86_64, 
+rhcos-*-live-rootfs.x86_64.img, rhcos-*-live.x86_64.iso
+mv rhcos* /tmp
+
+3. Install oc, openshift-install, vim, git
+tar -xvf openshift-install*
+tar -xvf openshift-client*
+
+sudo mv oc /usr/local/bin
+sudo mv kubectl /usr/local/bin
+
+4. Update vim Editor - user and root
+cat <<EOT >> ~/.vimrc
+syntax on                            
+set nu et ai sts=0 ts=2 sw=2 list hls
+EOT
+
+5. Enable Red Hat RPMs - use root
+subscription-manager repos --enable rhel-9-for-x86_64-baseos-rpms
+subscription-manager repos --enable rhel-9-for-x86_64-appstream-rpms
+
+6. Install ansible - use root
+dnf install -y ansible-core
+
+7. Install Python PIP - use root
+dnf install -y pip
+
+8. Install Python requests module - non-root
+python3 -m pip install requests
+
+9. Ansible Galaxy Crypto Module - non-root
+ansible-galaxy collection install community.crypto
+
+10. Ansible Firewalld module
+ansible-galaxy collection install ansible.posix
+
+11. Clone Helper Node Repo
+git clone https://github.com/redhat-cop/ocp4-helpernode
+directory should be ~/openshift/ocp4-helpernode
+
+#12. Clone Ryan Hay's Repo
+#git clone https://github.com/ryanhay/ocp4-metal-install
+
+12. Update vars.yaml - helpernode
+cd ocp4-helpernode
+cp docs/examples/vars.yaml .
+chmod +x vars.yaml
+
+---
+staticips: true
+disk: sda
+helper:
+  name: "ocplb.example.com"
+  ipaddr: "192.168.2.20"
+dns:
+  domain: "example.com"
+  clusterid: "ocp4"
+  forwarder1: "192.168.2.2"
+  forwarder2: "192.168.2.2"
+#dhcp:
+#  router: "192.168.2.1"
+#  bcast: "192.168.2.255"
+#  netmask: "255.255.254.0"
+#  poolstart: "192.168.2.10"
+#  poolend: "192.168.2.30"
+#  ipid: "192.168.7.0"
+#  netmaskid: "255.255.255.0"
+bootstrap:
+  name: "ocpbootstrap.example.com"
+  ipaddr: "192.168.2.21"
+# macaddr: "52:54:00:60:72:67"
+masters:
+  - name: "ocpmaster1.example.com"
+    ipaddr: "192.168.2.22"
+#    macaddr: "52:54:00:e7:9d:67"
+  - name: "ocpmaster2.example.com"
+    ipaddr: "192.168.2.23"
+#    macaddr: "52:54:00:80:16:23"
+  - name: "ocpmaster3.example.com"
+    ipaddr: "192.168.2.24"
+#    macaddr: "52:54:00:d5:1c:39"
+#workers:
+#  - name: "worker0"
+#    ipaddr: "192.168.7.11"
+#     macaddr: "52:54:00:f4:26:a1"
+#  - name: "worker1"
+#    ipaddr: "192.168.7.12"
+#     macaddr: "52:54:00:82:90:00"
+#  - name: "worker2"
+#    ipaddr: "192.168.7.13"
+#     macaddr: "52:54:00:8e:10:34"
+#other:
+#  - name: "non-cluster-vm"
+#    ipaddr: "192.168.7.31"
+#     macaddr: "52:54:00:f4:2e:2e"
+
+#force_ocp_download: false
+#remove_old_config_files: true
+ocp_bios: "file:///tmp/rhcos-4.14.15-x86_64-metal.x86_64.raw.gz"
+ocp_initramfs: "file:///tmp/rhcos-4.14.15-x86_64-live-initramfs.x86_64.img"
+ocp_install_kernel: "file:///tmp/rhcos-4.14.15-x86_64-live-kernel-x86_64"
+ocp_client: "file:///tmp/openshift-client-linux.tar.gz"
+ocp_installer: "file:///tmp/openshift-install-linux.tar.gz"
+helm_source: "file:///tmp/helm-v3.15.1-linux-amd64.tar.gz"
+
+nfs:
+  server: "ocpnfs.example.com"
+  path: "/exports/helper"
+
+
+13. Add the following line to the ansible.cfg
+which python3 - use to update line below
+interpreter_python=/usr/bin/python3
+
+14. Copy the OCP files to /tmp
+mv openshift-install* /tmp
+mv helm* /tmp
+
+*******************************************************
+Setup NFS Server
+*******************************************************
+1. Update vim Editor - user and root
+cat <<EOT >> ~/.vimrc
+syntax on                            
+set nu et ai sts=0 ts=2 sw=2 list hls
+EOT
+
+2. Install NFS on NFS Server for Helper Node - root
+dnf install -y nfs-utils
+systemctl start rpcbind
+systemctl status rpcbind.service
+ls -la /etc/systemd/system/rpcbind.service
+systemctl unmask rpcbind
+systemctl enable rpcbind
+systemctl unmask rpcbind.socket
+systemctl enable rpcbind.socket
+systemctl start rpcbind
+systemctl status rpcbind
+
+systemctl enable nfs-server.service
+systemctl start nfs-server.service
+systemctl status nfs-server.service
+mkdir -p /exports/helper
+chown -R nobody:nobody /exports/helper
+chmod -R 775 /exports/helper
+cat <<EOF | sudo tee -a /etc/exports 
+/exports/helper 192.168.2.0/23(rw,sync,root_squash,no_subtree_check,no_wdelay)
+
+EOF
+exportfs -rv
+
+firewall-cmd --add-service={nfs,nfs3,mountd,rpc-bind} --permanent
+firewall-cmd --reload
+firewall-cmd --list-all
+
+*******************************************************
+Helper Node - NFS Client
+*******************************************************
+1. Install NFS Client on Helper Node - root
+dnf install -y nfs-utils
+firewall-cmd --add-service mountd --permanent
+firewall-cmd --add-service rpc-bind --permanent
+firewall-cmd --add-service nfs --permanent
+firewall-cmd --reload
+
+showmount -e <IP or Name of Server>
+
+#Create permanent entry in /etc/fstab
+mkdir -p /mnt/helper
+<IP>:/exports/helper /mnt/helper nfs defaults 0 0
+
+2. Reboot Helper Node to get the NFS mounts to work
+
+*******************************************************
+Helper Node - Install
+*******************************************************
+1. Run the Helper Node ansible playbook
+cd /home/<user>/openshift/ocp4-helpernode
+run sudo command to get password for --become
+ansible-playbook -e @vars.yaml tasks/main.yml --become
+
+2. Verify the Helper Node
+helpernodecheck install-info
+
+3. Copy the Web Files to the Apache Server on the Helper Node
+sudo cp /tmp/rhcos* /var/www/html/install/
+
+4. Verify the SSH keys were created - helper_rsa & helper_rsa.pub
+ls ~/.ssh
+
+*******************************************************
+OpenShift Install
+*******************************************************
+
+1.Create the OpenShift Pull Secret location
+mkdir ~/.openshift
+
+2. Download OpenShift Pull Secret
+Visit try.openshift.com and choose "Bare Metal"
+Download the pull secret
+Copy the Pull Secret to ~/.openshift as pull-secret
+
+3. Create the install-config.yaml
+cat <<EOF > install-config.yaml
+apiVersion: v1
+baseDomain: example.com
+compute:
+- hyperthreading: Enabled
+  name: worker
+  replicas: 0
+controlPlane:
+  hyperthreading: Enabled
+  name: master
+  replicas: 3
+metadata:
+  name: ocp4
+networking:
+  clusterNetworks:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  none: {}
+pullSecret: '$(< ~/.openshift/pull-secret)'
+sshKey: '$(< ~/.ssh/helper_rsa.pub)'
+EOF
+
+24. Make a Backup Copy of the install-config.yaml
+- cp install-config.yaml install-config.yaml.orig
+
+25. Create install-<cluster-id> directory for install files
+mkdir install-<cluster-id>
+mkdir install-ocp4dvst
+
+26. Move install-config.yaml to install-<cluster-id> directory
+mv install-config.yaml install-<cluster-id>/
+mv install-config.yaml install-ocp4dvst/
+
+27. Create OpenShift Install Manifests
+openshift-install create manifests --dir install-ocp4dvst
+
+28. IF Master Nodes will NOT BE Worker Nodes - Update manifests/cluster-scheduler-02-config.yml
+- set the mastersSchedulable to false
+sed -i 's/mastersSchedulable: true/mastersSchedulable: false/g' manifests/cluster-scheduler-02-config.yml
+
+29. Create a Backup of the manifests and openshift directory
+mkdir -p install-ocp4dvst/backup
+cp -R install-ocp4dvst/manifests install-ocp4dvst/backup/
+cp -R install-ocp4dvst/openshift install-ocp4dvst/backup/
+
+30. Create the Ignition Configs
+openshift-install create ignition-configs --dir install-ocp4dvst
+
+31. Copy the Ignition Configs to the WebServer - sudo needed
+sudo cp -f install-ocp4dvst/*.ign /var/www/html/ignition/
+sudo restorecon -vR /var/www/html/
+sudo chmod o+r /var/www/html/ignition/*.ign
+
+32. Clone ISO Maker to configure files for Custom ISOs for each Node 
+git clone https://github.com/chuckersjp/coreos-iso-maker.git
+cd coreos-iso-maker
+vim group_vars/all.yml
+-gateway
+-netmask
+-dns
+-webserver_url
+-install_drive
+-ocp_version
+-iso_checksum - get checksum here - https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/4.14/4.14.15/
+-iso_name
+-rhcos_bios
+
+vim inventory.yml
+-comment out workers
+-update bootstrap server name and ip
+-update master1, master2, master3 server names and ip
+
+33. Update web files for ISO Maker - sudo
+sudo cp /var/www/html/install/bios.raw.gz /var/www/html/
+sudo cp /var/www/html/ignition/*.ign /var/www/html/
+sudo ln -s /var/www/html/worker.ign /var/www/html/workers.ign
+sudo ln -s /var/www/html/master.ign /var/www/html/masters.ign
+sudo chmod o+r /var/www/html/*
+sudo restorecon -vR /var/www/html
+
+34. Create Custom ISOs with ISO Maker
+cd coreos-iso-maker
+- Single ISO, 1 to use for all nodes and menu to each node
+ansible-playbook playbook-single.yml -K
+
+- Multiple ISOs, 1 for each Node
+ansible-playbook playbook-multi.yml -K
+
+35. Load the ISOs into their respective VMs and reboot the VMs
+36. Launch the openshift-install bootstrap process
+openshift-install --dir install-ocp4dvst wait-for bootstrap-complete --log-level debug
+
+37. After bootstrap is complete
+export KUBECONFIG=$(pwd)/install-ocp4/auth/kubeconfig
+# OpenShift Client Commands
+oc whoami
+oc get nodes
+oc get co
+oc get csr
+
+
+
+
+
+
+
+
+

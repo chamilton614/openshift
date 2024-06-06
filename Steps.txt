@@ -1,0 +1,2 @@
+1. Setup DNS Zones with Static IPs
+2. 

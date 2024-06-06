@@ -1,0 +1,309 @@
+
+1 x bootstrap
+4 cpu 16 GB 120GB
+
+3 x control planes
+
+3 x workers
+
+=======
+Infra
+=======
+static ips or DHCP
+
+bind dns - domains - can be local fictious
+A Records
+api
+api-int
+bootstrap
+master0
+etcd-0
+master1
+etcd-1
+master2
+etcd-2
+worker0
+worker1
+worker2
+apps (wildcard)
+*
+
+NO ETCD Reverse PTR Records only Master and Others
+
+SRV Records
+_etcd-server-ssl._tcp   etcd-0.<domain name>
+_etcd-server-ssl._tcp   etcd-1.<domain name>
+_etcd-server-ssl._tcp   etcd-2.<domain name>
+
+
+===
+Services VM aka Helper Node
+===
+1. Choose Centos 8, Centos 8 Stream, RHEL 8 and download the chosen ISO
+2. Build the VM in vSphere as a 4 CPU, 8GB RAM, 100GB Disk with Static IP address on Main Network
+3. Add 2nd NIC to the OCP Network (Non-routable to internet aka NAT Adapter)
+4. Start the OS Install - Minimal install, Basic User that is an Admin, Set User and Root Passwords
+5. SSH Login to Services VM as local Admin and switch to root - ssh user@services
+6. Update the Package Index - yum update -y
+7. Set the EPEL Repo - yum -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-$(rpm -E %rhel).noarch.rpm
+8. Install vim, ansible and git and clone the Helper Node Repo
+    - yum -y install vim ansible git
+    - git clone https://github.com/redhat-cop/ocp4-helpernode
+9. Clone Ryan Hay's Repo - git clone https://github.com/ryanhay/ocp4-metal-install
+10. Update VIM Editor
+    cat <<EOT >> ~/.vimrc
+    syntax on                                                                                        
+    set nu et ai sts=0 ts=2 sw=2 list hls
+    EOT
+11. Update the 2nd Network Card to be the Internal NAT IP
+    - Change the name to ens224
+    - Set IP to 192.168.22.1
+    - Leave Gateway blank
+    - Set DNS to 127.0.0.1
+    - Search Search Domain to ocp4.example.com
+    - Never use this network for default route
+    - Require IPv4 addressing
+    - Disable IPv6
+    - Automatically Connect
+    - Reset 2nd NIC - nmcli connection down ens224, nmcli connection up ens224
+12. Setup Firewall Internal Zone
+    - nmcli connection modify ens224 connection.zone internal
+13. Setup Firewall External Zone
+    - nmcli connection modify ens192 connection.zone external
+14. Check your Firewall Active Zones
+    - firewall-cmd --get-active-zones 
+15. Setup Masquerading on the Network Interfaces
+    - firewall-cmd --zone=external --add-masquerade --permanent
+    - firewall-cmd --zone=internal --add-masquerade --permanent
+16. Reload Firewall Config
+    - firewall-cmd --reload
+17. Verify the Firewall Settings in each Zone
+    - firewall-cmd --list-all --zone=internal
+    - firewall-cmd --list-all --zone=external
+18. Verify IP Forwarding is turned on
+    - cat /proc/sys/net/ipv4/ip_forward
+19. Copy the /docs/examples/vars.yaml from ocp4-helpernode
+    - cd ocp4-helpernode
+    - cp docs/examples/vars.yaml .
+20. Update the following in the vars.yaml using VIM
+    - name
+    - ipaddr - NIC #1 IP
+    - networkifacename - name of NIC #1
+    - domain
+    - clusterid
+    - forwarder1 - dns upstream
+    - forwarder2 - dns upstream
+    - router - NIC #2 IP
+    - bcast
+    - netmask
+    - poolstart
+    - poolend
+    - ipid
+    - netmaskid
+    - bootstrap ipaddr
+    - master0-2 ipaddr
+    - worker0-2 ipaddr
+    - non-cluster-vm ipaddr
+21. Update the following in the vars/main.yaml using VIM
+    - force_ocp_download
+    - remove_old_config_files
+    - ocp_bios - Get Versions here https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos
+    - ocp_initramfs - Get Versions here https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos
+    - ocp_install_kernel - Get Versions here https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos
+    - ocp_client - Get Versions here https://mirror.openshift.com/pub/openshift-v4/clients/ocp
+    - ocp_installer - Get Versions here https://mirror.openshift.com/pub/openshift-v4/clients/ocp
+    - helm_source - Get Versions here https://github.com/helm/helm/releases
+    - uefi
+    - setup_registry
+        deploy
+        autosync_registry
+        release_tag
+22. Add the PXE section to the vars/main.yaml using VIM
+    - After uefi add the line
+    pxe:
+      generate_default: true
+23. Install the python requests module
+    - python3 -m pip install requests
+#24. Install the Ansible Galaxy Community cryptography module
+    - ansible-galaxy collection install community.crypto
+#25. Add the following line to the ansible.cfg
+    - interpreter_python=/bin/python3
+26. Create the OpenShift Pull Secret location
+    - mkdir ~/.openshift
+27. Download OpenShift Pull Secret
+    - Visit try.openshift.com and choose "Bare Metal"
+    - Download the pull secret
+    - Copy the Pull Secret to ~/.openshift as pull-secret
+28. Run the Helper Node Ansible Playbook
+    - ansible-playbook -e @vars.yaml tasks/main.yml
+29. Update the Firewall Ports
+    firewall-cmd --add-port=67/tcp --zone=internal --permanent
+    firewall-cmd --add-port=53/tcp --zone=internal --permanent
+    firewall-cmd --add-port=53/udp --zone=internal --permanent
+    firewall-cmd --add-port=8080/tcp --zone=internal --permanent
+    firewall-cmd --add-port=69/udp --zone=internal --permanent
+    firewall-cmd --add-port=111/tcp --zone=internal --permanent
+    firewall-cmd --add-port=2049/tcp --zone=internal --permanent
+    firewall-cmd --add-port=20048/tcp --zone=internal --permanent
+    firewall-cmd --add-port=50825/tcp --zone=internal --permanent
+    firewall-cmd --add-port=53248/tcp --zone=internal --permanent
+
+    firewall-cmd --add-port=6443/tcp --zone=internal --permanent # kube-api-server on control plane nodes
+    firewall-cmd --add-port=6443/tcp --zone=external --permanent # kube-api-server on control plane nodes
+    firewall-cmd --add-port=6443/udp --zone=internal --permanent # kube-api-server on control plane nodes
+    firewall-cmd --add-port=6443/udp --zone=external --permanent # kube-api-server on control plane nodes
+
+    firewall-cmd --add-port=22623/tcp --zone=internal --permanent # machine-config server
+    firewall-cmd --add-port=22623/udp --zone=internal --permanent # machine-config server
+
+    firewall-cmd --add-service=http --zone=internal --permanent # web services hosted on worker nodes
+    firewall-cmd --add-service=http --zone=external --permanent # web services hosted on worker nodes
+    
+    firewall-cmd --add-service=https --zone=internal --permanent # web services hosted on worker nodes
+    firewall-cmd --add-service=https --zone=external --permanent # web services hosted on worker nodes
+    
+    firewall-cmd --add-port=9000/tcp --zone=external --permanent # HAProxy Stats
+    
+    firewall-cmd --zone=internal --add-service mountd --permanent
+    firewall-cmd --zone=internal --add-service rpc-bind --permanent
+    firewall-cmd --zone=internal --add-service nfs --permanent
+
+    firewall-cmd --reload
+
+30. Verify Helpernode by running /usr/local/bin/helpernodecheck
+
+31. Verify the SSH Keys in ~/.ssh/helper_rsa
+32. Create ocp4 directory
+    - mkdir ~/ocp4
+    - cd ~/ocp4
+33. Create the install-config.yaml in ~/ocp4
+cat <<EOF > install-config.yaml
+apiVersion: v1
+baseDomain: example.com
+compute:
+- hyperthreading: Enabled
+  name: worker
+  replicas: 0
+controlPlane:
+  hyperthreading: Enabled
+  name: master
+  replicas: 3
+metadata:
+  name: ocp4
+networking:
+  clusterNetworks:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  none: {}
+pullSecret: '$(< ~/.openshift/pull-secret)'
+sshKey: '$(< ~/.ssh/helper_rsa.pub)'
+EOF
+
+34. Make a Backup Copy of the install-config.yaml
+    - cp install-config.yaml install-config.yaml.orig
+35. Create OpenShift Install Manifests
+    - openshift-install create manifests
+36. Update manifests/cluster-scheduler-02-config.yml
+    - set the mastersSchedulable to false
+    sed -i 's/mastersSchedulable: true/mastersSchedulable: false/g' manifests/cluster-scheduler-02-config.yml
+37. Create a Backup of the manifests and openshift directory
+    - mkdir Backup
+    - cp -R manifests Backup/
+    - cp -R openshift Backup/
+38. Create the Ignition Configs
+    - openshift-install create ignition-configs
+39. Copy the Ignition Configs to the WebServer
+    - cp -f ~/ocp4/*.ign /var/www/html/ignition/
+    - restorecon -vR /var/www/html/
+    - chmod o+r /var/www/html/ignition/*.ign
+40. Clone the OCP v4 vSPhere UPI Automation Repo
+    - cd ~
+    - git clone https://github.com/RedHatOfficial/ocp4-vsphere-upi-automation.git
+41. Update the group_vars/all.yml file in the following sections
+    - helper_vm_ip -use the internal ip not external ip for 2 nic setup
+    - base_domain
+    - cluster_name
+    - networkType -uncomment and add OpenShiftSDN
+    - isolationMode -uncomment and add NetworkPolicy
+    - installer_ssh_key -update name of ssh key
+    - pull_secret -update name of the pull secret
+    - vcenter section ip, datastore, network, usernames, passwords, datacenter, folder path, template_name, hw_version
+        clients_url, dependencies_url, govc
+    - vms - update mac address and ip address, cpu, ram 
+    - static ip
+    - proxy
+    - registry 
+42. Run the Installation Playbook
+    - NO ansible-playbook -i staging dhcp_pxe.yml
+    -ansible-playbook -i staging dhcp_ova.yml
+43. Install the Python Requests module
+    - /usr/libexec/platform-python -m pip install requests
+44. Check the Bootstrap Installation Status
+    ssh -i ~/.ssh/ocp4 core@bootstrap.ocp4.example.com
+    journalctl -b -f -u release-image.service -u bootkube.service
+45. Check the Other Servers by logging in
+    ssh -i ~/.ssh/ocp4 core@master0.ocp4.example.com
+46. Check the installation status by logging in via the command line 
+    export KUBECONFIG=$(pwd)/install-dir/auth/kubeconfig
+    # OpenShift Client Commands
+    oc whoami
+    oc get nodes
+    oc get co
+    oc get csr
+47. Update the Image Registry to be Managed 
+    oc patch configs.imageregistry.operator.openshift.io cluster --type merge --patch '{"spec":{"managementState":"Managed"}}'
+    #oc patch configs.imageregistry.operator.openshift.io cluster --type merge --patch '{"spec":{"managementState":"Removed"}}'
+    oc patch config.imageregistry.operator.openshift.io/cluster --type=merge -p '{"spec":{"rolloutStrategy":"Recreate","replicas":1}}'
+    
+48. Create an NFS Storage Class
+    kind: StorageClass
+    apiVersion: storage.k8s.io/v1
+    metadata:
+      name: nfs
+    provisioner: kubernetes.io/no-provisioner
+    reclaimPolicy: Delete
+    volumeBindingMode: WaitForFirstConsumer
+
+49. Create the NFS Directory for the Image Registry
+mkdir -p /exports/registry
+chown -R nobody:nobody /exports/registry
+chmod -R 775 /exports/registry
+echo "/exports/registry  192.168.2.0/23(rw,sync,root_squash,no_subtree_check,no_wdelay)" > /etc/exports
+exportfs -rv
+
+50. Create the PV for the Image Registry
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nfs-pv
+spec:
+  capacity:
+    storage: 100Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: nfs
+  nfs:
+    path: /exports/registry
+    server: 192.168.2.25
+
+51. Setup the PVC for the Image Registry
+    oc edit configs.imageregistry.operator.openshift.io
+    storage:
+      pvc:
+        claim:
+52. Check the PVC for the Image Registry Status
+    oc get pvc -n openshift-image-registry
+
+
+
+00:50:56:a8:aa:a1
+22.20 - 23
+22.11 - 13
+
+kubeadmin
+qsAYh-mpGSi-wjAw7-PzANn
