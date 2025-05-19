@@ -1,0 +1,8 @@
+
+1. create directory - install-ocp4
+2. copy install-config.yaml.IPI as install-config.yaml
+3. copy install-config.yaml to install-ocp4/
+4. openshift-install create cluster --dir=install-ocp4
+
+
+openshift-install --dir install-ocp4 wait-for bootstrap-complete --log-level debug

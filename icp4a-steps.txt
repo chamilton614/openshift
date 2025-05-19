@@ -1,0 +1,314 @@
+Steps to do after OpenShift has been setup
+
+#Create NFS Shares for ImageRegistry
+mkdir -p /nfs/registry
+chown -R nobody:nobody /nfs/registry
+chmod -R 777 /nfs/registry
+
+#Setup the ImageRegistry PV
+oc edit configs.imageregistry.operator.openshift.io
+
+managementState: Managed
+
+storage:
+  pvc:
+    claim:
+
+#Create the PV for the ImageRegistry PVC to bind to
+oc create -f imageregistry-pv.yaml
+
+#Confirm the ImageRegistry PVC is in pending state
+oc get pvc -n openshift-image-registry
+
+#Smoke Test
+oc new-project smoke-test
+spin up a sample application
+
+#Create Project
+oc new-project poc
+
+#Create NFS Shares for Operator and FileNet CPE
+mkdir -p /nfs/operator
+chown -R nobody:nobody /nfs/operator
+chmod -R 777 /nfs/operator
+
+mkdir -p /nfs/logs
+chown -R nobody:nobody /nfs/logs
+chmod -R 777 /nfs/logs
+
+mkdir -p /nfs/fncm
+chown -R nobody:nobody /nfs/fncm
+chmod -R 777 /nfs/fncm
+
+#Create Storage Class
+nfs-sc.sh
+
+#Create PVs & PVC for Operator
+Run the operator-shared-pvc.yaml
+oc create -f operator-shared-pvc.yaml -n poc
+
+#Create Image Pull Secret
+ibm-entitlement-key
+server: cp.icr.io
+user: cp
+password: Entitlement key value
+
+admin-registrykey
+server: cp.icr.io
+user: cp
+password: Entitlement key value
+
+#Install Operator Catalog
+#Add the IBM Operator Catalog to openshift
+import 2 Yamls
+https://www.ibm.com/docs/en/cloud-paks/cp-biz-automation/21.0.x?topic=hub-installing-operator-catalog
+
+#Install the Operator
+IBM CloudPak for Business Automation
+
+#Copy SQL JDBC Driver to operator shared pvc
+
+run operator rsync
+--- copy JDBC driver to operator share PVC 
+--- e.g. ./jdbc/mssql directory with sql server driver jar
+
+/jdbc/sqlserver/<jdbc jar>
+
+oc rsync ./jdbc <pod>:/opt/ansible/share 
+e.g. oc rsync ./jdbc ibm-fncm-operator-6dfbf797f9-9blc2:/opt/ansible/share
+
+
+#Cert Check
+nmap -p 636 -vv -script ssl-cert* pddc2.cmers.com
+
+#LDAP SSL/TLS Cert Example
+oc create secret generic mycert --from-file=ca.crt=</path/to/file>
+
+#OCP CMERS - intermediate pddc1 cert
+oc create secret generic cmers-pddc1-cert --from-file=pddc1.crt=./pddc1.crt
+
+#OCP CMERS - intermediate pddc2 cert
+oc create secret generic cmers-pddc2-cert --from-file=pddc2.crt=./pddc2.crt
+
+#OCP CMERS - root ca cert
+oc create secret generic cmers-ca-cert --from-file=ca.crt=./ca.crt
+
+#Setup Root CA CRT
+oc create secret tls root-ca –-key=/path/to/rootca.key –-cert=/path/to/rootca.crt
+oc create secret tls root-ca –-key=root-ca.key –-cert=root-ca.crt
+
+#####################################
+#Update Ingress Controller to use CMERS Wildcard GoDaddy Fullchain Cert and Key files
+oc -n openshift-ingress create secret tls router-certs --cert=${CERTDIR}/cmers.com-full-chain.pem --key=${CERTDIR}/cmers.com-private-key.pem
+
+#Patch Ingress Controller to apply the new TLS Secret 
+oc -n openshift-ingress-operator patch ingresscontroller default  --type=merge --patch='{"spec": { "defaultCertificate": { "name": "router-certs" }}}'
+
+#Router Pods in Ingress Should Restart Automatically
+oc get pods -n openshift-ingress
+
+#Verify the Cert was applied successfully
+echo Q |\
+  openssl s_client -connect console-openshift-console.apps.ocp4.cmers.com:443 -showcerts 2>/dev/null |\
+  openssl x509 -noout -subject -issuer -enddate
+
+More info - https://access.redhat.com/documentation/en-us/openshift_container_platform/4.7/html-single/networking/index#configuring-ingress-controller
+
+######################################
+
+
+#LDAP Username and Password Example
+CPEAdmin-DV
+DVcpe@m1n
+
+pddc1.cmers.com
+CN=devappacct,OU=Clarety,DC=cmers,DC=com
+ERS_App_Acct
+
+OU=FileNet,DC=cmers,DC=com
+
+oc create secret generic ldap-bind-secret --from-literal=ldapUsername=<user> --from-literal=ldapPassword=<password>
+
+#OCP CMERS
+oc create secret generic ldap-bind-secret --from-literal=ldapUsername=devappacct --from-literal=ldapPassword={xor}Gg0MAB4vLwAePDwr
+oc create secret generic ldap-bind-secret --from-literal=ldapUsername=CN=devappacct,OU=Clarety,DC=cmers,DC=com --from-literal=ldapPassword={xor}Gg0MAB4vLwAePDwr
+
+#Secret for FNCM
+https://www.ibm.com/docs/en/cloud-paks/cp-biz-automation/21.0.x?topic=pifcm-creating-secrets-protect-sensitive-filenet-content-manager-configuration-data
+
+
+oc create secret generic ibm-fncm-secret \
+--from-literal=gcdDBUsername="ocpgcdadmin" --from-literal=gcdDBPassword="{xor}Dx8sLChvLTtubWw=" \
+--from-literal=osDBUsername="ocpcpeos1dvadmin" --from-literal=osDBPassword={xor}Dx8sLChvLTtubWw= \
+--from-literal=appLoginUsername="CPEAdmin-DV" --from-literal=appLoginPassword={xor}Gwk8LzofMm4x \
+--from-literal=keystorePassword="filenet123" \
+--from-literal=ltpaPassword="filenet123"
+
+
+
+oc create secret generic ibm-fncm-secret \
+--from-literal=gcdDBUsername="ocpgcdadmin" --from-literal=gcdDBPassword="P@ssw0rd123" \
+--from-literal=osDBUsername="ocpcpeos1dvadmin" --from-literal=osDBPassword="P@ssw0rd123" \
+--from-literal=appLoginUsername="CPEAdmin-DV" --from-literal=appLoginPassword="DVcpe@m1n" \
+--from-literal=keystorePassword="filenet123" \
+--from-literal=ltpaPassword="filenet123"
+
+#Secret for BAN
+https://www.ibm.com/docs/en/cloud-paks/cp-biz-automation/21.0.x?topic=piban-creating-secrets-protect-sensitive-business-automation-navigator-configuration-data
+
+oc create secret generic ibm-ban-secret \
+  --from-literal=navigatorDBUsername="ocpicnos1dvadmin" \
+  --from-literal=navigatorDBPassword={xor}Dx8sLChvLTtubWw= \
+  --from-literal=keystorePassword="filenet123" \
+  --from-literal=ltpaPassword="filenet123" \
+  --from-literal=appLoginUsername="CPEAdmin-DV" \
+  --from-literal=appLoginPassword={xor}Gwk8LzofMm4x \
+  --from-literal=jMailUsername="mailadmin" \
+ --from-literal=jMailPassword="mailme"
+
+oc create secret generic ibm-ban-secret \
+  --from-literal=navigatorDBUsername="ocpicnos1dvadmin" \
+  --from-literal=navigatorDBPassword="P@ssw0rd123" \
+  --from-literal=keystorePassword="filenet123" \
+  --from-literal=ltpaPassword="filenet123" \
+  --from-literal=appLoginUsername="CPEAdmin-DV" \
+  --from-literal=appLoginPassword="DVcpe@m1n" \
+  --from-literal=jMailUsername="mailadmin" \
+ --from-literal=jMailPassword="mailme"
+
+
+#Deploy Operator
+
+./deployOperator.sh -i cp.icr.io/cp/cp4a/icp4a-operator:20.0.3-IF002 -p 'admin.registrykey' -n poc
+
+
+
+
+
+https://github.com/ibm-ecm/container-samples/tree/5.5.7
+
+https://github.com/ibm-ecm/container-samples/blob/5.5.7/descriptors/ibm_fncm_cr_enterprise_FC_content.yaml
+
+
+
+
+ldap password {xor} encoded part of the secret
+DB too
+
+
+ConfigMap - icp4adeploy is the default instance name 
+icp4adeploy-cp4ba-access-info ConfigMap that has urls etc.
+
+icp4adeploy-cpe-config
+
+#Final ConfigMap to know it works
+icp4adeploy-cp4ba-access-info - configmap
+
+CPEAdmin-DV
+DVcpe@m1n
+
+#To get messages.log from POD
+oc rsync <POD>:/opt/ibm/wlp/usr/servers/defaultServer/logs/<POD>/messages.log <Local Path>
+
+oc rsync icp4adeploy-navigator-deploy-6655d7bb8c-5n6qt:/opt/ibm/wlp/usr/servers/defaultServer/logs/icp4adeploy-navigator-deploy-6655d7bb8c-5n6qt/messages.log .
+
+ibm-cp4a-operator-76f9bc68d5-7s6j4
+
+
+/opt/ibm/wlp/usr/servers/defaultServer/FileNet/icp4adeploy-cpe-deploy-6d76d76b64-r7gqd
+ce_system0.log
+
+#Check the Keystore for Certs
+keytool -list -v -keystore /opt/ibm/wlp/usr/servers/defaultServer/resources/security/ibm_customFNCMTrustStore.p12 -storepass filenet123 -storetype PKCS12
+keytool -list -v -keystore ibm_customFNCMTrustStore.p12 -storepass filenet123 -storetype PKCS12
+keytool -list -v -keystore ibm_customBANTrustStore.p12 -storepass filenet123 -storetype PKCS12
+
+keytool -exportcert -alias icp4a-rootca-auto -keystore /opt/ibm/wlp/usr/servers/defaultServer/resources/security/ibm_customFNCMTrustStore.p12 -storepass filenet123 -storetype PKCS12 -file blah.crt
+
+keytool -import -file pddc1.crt -alias PDDC1 -keystore /opt/ibm/wlp/usr/servers/defaultServer/resources/security/ibm_customFNCMTrustStore.p12 -storepass filenet123 -storetype PKCS12
+
+#Import local linux PDDC1.crt
+keytool -import -file pddc1.crt -alias PDDC1 -keystore ibm_customFNCMTrustStore.p12 -storepass filenet123 -storetype PKCS12
+keytool -import -file pddc1.crt -alias PDDC1 -keystore ibm_customBANTrustStore.p12 -storepass filenet123 -storetype PKCS12
+
+#Import local linux PDDC2.crt
+keytool -import -file pddc2.crt -alias PDDC2 -keystore ibm_customFNCMTrustStore.p12 -storepass filenet123 -storetype PKCS12
+keytool -import -file pddc2.crt -alias PDDC2 -keystore ibm_customBANTrustStore.p12 -storepass filenet123 -storetype PKCS12
+
+#Import local windows PDDC1.crt
+echo yes | keytool -import -file C:\Files\cloudpak-install\certs\pddc1.crt -alias PDDC1 -keystore C:\Users\chamil\Downloads\ibm_customFNCMTrustStore.p12 -storepass filenet123 -storetype PKCS12
+echo yes | keytool -import -file C:\Files\cloudpak-install\certs\pddc1.crt -alias PDDC1 -keystore C:\Users\chamil\Downloads\ibm_customBANTrustStore.p12 -storepass filenet123 -storetype PKCS12
+
+#Import local windows PDDC2.crt
+echo yes | keytool -import -file C:\Files\cloudpak-install\certs\pddc2.crt -alias PDDC2 -keystore C:\Users\chamil\Downloads\ibm_customFNCMTrustStore.p12 -storepass filenet123 -storetype PKCS12
+echo yes | keytool -import -file C:\Files\cloudpak-install\certs\pddc2.crt -alias PDDC2 -keystore C:\Users\chamil\Downloads\ibm_customBANTrustStore.p12 -storepass filenet123 -storetype PKCS12
+
+
+
+
+#Base64 encode command
+cat <Truststore File> | base64 -w0
+cat ibm_customFNCMTrustStore.p12 | base64 -w0
+cat ibm_customBANTrustStore.p12 | base64 -w0
+
+
+
+
+
+Here are the steps for the workaround for the CPE custom keystores for your LDAP SSL certificate...
+ 
+1. Download icp4adeploy-fncm-custom-ssl-secret secret
+2. Download/Save to file ibm_customFNCMTrustStore.p12 in the above secret
+3. Add your LDAP SSL cert into the truststore in #2
+4. Base64 encode the truststore that was updated in #3
+5. Replace the base64 encoded string in icp4adeploy-fncm-custom-ssl-secret yaml file you downloaded in #1 for ibm_customFNCMTrustStore.p12
+6. Scale down the operator pod to 0
+7. Apply the modified yaml in #5
+8. Kill both CPE pods
+
+
+
+
+Apply Yamls - manual steps
+
+oc create -f fncm_v1_fncm_crd.yaml
+oc create -f service_account.yaml
+oc create -f cluster_role.yaml
+oc create -f cluster_role_binding.yaml
+oc create -f role.yaml
+oc create -f role_binding.yaml
+oc create -f operator.yaml
+
+
+Remove & Cleanup ICP4BA from OCP
+1. Remove the ICP4BA Cluster Deployment from Installed Operators in the project
+2. After the ICP4BA pods have terminated, delete the ICP4A operator pod and let it recreate
+3. Delete all PVC except
+    cp4a-shared-log-pvc
+    operator-shared-pvc
+4. Delete all PV except the ones attached to
+    imageregistry-pv
+    cp4a-shared-log-pvc
+    operator-shared-pvc
+    mongodbdir-icp-mongodb-0 pvc (ibm common services)
+
+
+#Configure FileNet Deployment manager
+1. Create an HTTP Route to avoid redirects to HTTPS
+  Name: cpe-fdm 
+  Host: cpe-fdm.apps.ocp4.cmers.com
+  Port: 80
+  No TLS
+
+Resulting Route for FDM should be similar to the following:
+http://cpe-fdm.apps.ocp4.cmers.com/wsi/FNCEWS40MTOM
+
+
+#FDM Import CACerts
+%JAVA_HOME%\bin\keytool -importcert -keystore cacerts -storepass changeit -alias pdfn-self-signed -file C:\Files\cloudpak-install\certs\pdfn-acce-tls.crt
+
+
+
+http://dvfndc.cmers.com/tmweb.net/default.aspx
+
+http://navigator-poc.apps.ocp4.cmers.com/navigator?desktop=HPScan

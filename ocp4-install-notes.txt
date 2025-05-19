@@ -254,56 +254,220 @@ EOF
     oc get nodes
     oc get co
     oc get csr
-47. Update the Image Registry to be Managed 
-    oc patch configs.imageregistry.operator.openshift.io cluster --type merge --patch '{"spec":{"managementState":"Managed"}}'
-    #oc patch configs.imageregistry.operator.openshift.io cluster --type merge --patch '{"spec":{"managementState":"Removed"}}'
-    oc patch config.imageregistry.operator.openshift.io/cluster --type=merge -p '{"spec":{"rolloutStrategy":"Recreate","replicas":1}}'
-    
-48. Create an NFS Storage Class
-    kind: StorageClass
-    apiVersion: storage.k8s.io/v1
-    metadata:
-      name: nfs
-    provisioner: kubernetes.io/no-provisioner
-    reclaimPolicy: Delete
-    volumeBindingMode: WaitForFirstConsumer
 
-49. Create the NFS Directory for the Image Registry
+############################################################
+POST OpenShift Installation Tasks
+############################################################    
+#NFS Server steps - use root
+49. Create the NFS Directory for the Image Registry PV
 mkdir -p /exports/registry
 chown -R nobody:nobody /exports/registry
 chmod -R 775 /exports/registry
-echo "/exports/registry  192.168.2.0/23(rw,sync,root_squash,no_subtree_check,no_wdelay)" > /etc/exports
+echo "/exports/registry  192.168.2.0/23(rw,sync,root_squash,no_subtree_check,no_wdelay)" >> /etc/exports
 exportfs -rv
 
-50. Create the PV for the Image Registry
-apiVersion: v1
-kind: PersistentVolume
+50. Create the NFS Directory Share for PVs
+mkdir -p /exports/share
+chown -R nobody:nobody /exports/share
+chmod -R 775 /exports/share
+echo "/exports/share  192.168.2.0/23(rw,sync,root_squash,no_subtree_check,no_wdelay)" >> /etc/exports
+exportfs -rv
+
+51. Set the SELinux to be persistent across reboots for pods to write to NFS shares
+setsebool -P virt_use_nfs 1
+
+52. Set the SElinux settings for NFS directory Read and Write as well as content switch
+setsebool -P nfs_export_all_rw 1
+setsebool -P nfs_export_all_ro 1
+
+semanage fcontext -a -t public_content_rw_t  "/exports/helper(/.*)?"
+restorecon -R /exports/helper
+
+semanage fcontext -a -t public_content_rw_t  "/exports/registry(/.*)?"
+restorecon -R /exports/registry
+
+semanage fcontext -a -t public_content_rw_t  "/exports/share(/.*)?"
+restorecon -R /exports/share
+
+exportfs -arv
+
+#End NFS Server steps
+
+#LB Server steps
+
+#Setup NFS Storage Provisioner for openshift-image-registry on Cluster using LB/Bastion - need helm 3 installed
+#helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner
+
+#helm install -n nfs-provisioning --create-namespace nfs-subdir-external-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner --set nfs.server=192.168.2.25 --set nfs.path=/exports/registry
+# Namespace already created so removed the parameter
+#helm install -n openshift-image-registry nfs-subdir-external-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner --set nfs.server=192.168.2.25 --set nfs.path=/exports/registry
+
+53. Create openshift-nfs-storage namespace and have the cluster monitor the NFS storage Operator
+
+oc login to openshift 
+oc create namespace openshift-nfs-storage
+oc label namespace openshift-nfs-storage "openshift.io/cluster-monitoring=true"
+oc project openshift-nfs-storage
+
+54. Clone the NFS-Subdir-External provisioner
+git clone https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner.git
+cd nfs-subdir-external-provisioner
+
+55. Update the RBAC and Deployment YAMLs with the openshift-nfs-storage namespace
+
+NAMESPACE=`oc project -q`
+sed -i'' "s/namespace:.*/namespace: $NAMESPACE/g" ./deploy/rbac.yaml ./deploy/deployment.yaml
+
+56. Apply the RBAC YAML and setup the service account
+oc create -f deploy/rbac.yaml
+oc adm policy add-scc-to-user hostmount-anyuid system:serviceaccount:$NAMESPACE:nfs-client-provisioner
+
+57. Create an NFS Provisioner Deployment for OpenShift Registry
+cp deploy/deployment.yaml deploy/deployment-registry.yaml
+
+#Using sed | delimitter instead of / 
+NFSCLIENTNAME=nfs-client-provisioner-registry
+sed -i'' "s|name: nfs-client-provisioner|name: $NFSCLIENTNAME|g" ./deploy/deployment-registry.yaml
+sed -i'' "s|app: nfs-client-provisioner|app: $NFSCLIENTNAME|g" ./deploy/deployment-registry.yaml
+
+#Using sed | delimtter instead of /
+STORAGECLASS=registry-nfs-storage
+sed -i'' "s|value: k8s-sigs.io/nfs-subdir-external-provisioner|value: k8s-sigs.io/$STORAGECLASS|g" ./deploy/deployment-registry.yaml
+
+#Using sed | delimitter instead of / 
+NFSSERVER=ocpnfs.example.com
+sed -i'' "s|value: 10.3.243.101|value: $NFSSERVER|g" ./deploy/deployment-registry.yaml
+sed -i'' "s|server: 10.3.243.101|server: $NFSSERVER|g" ./deploy/deployment-registry.yaml
+
+#Using sed | delimitter instead of / 
+NFSPATH=/exports/registry
+sed -i'' "s|value: /ifs/kubernetes|value: $NFSPATH|g" ./deploy/deployment-registry.yaml
+sed -i'' "s|path: /ifs/kubernetes|path: $NFSPATH|g" ./deploy/deployment-registry.yaml
+
+58. Create a Storage Class for Registry
+echo 'apiVersion: storage.k8s.io/v1
+kind: StorageClass
 metadata:
-  name: nfs-pv
+  name: registry-nfs-storage
+provisioner: k8s-sigs.io/registry-nfs-storage
+parameters:
+  pathPattern: "${.PVC.namespace}/${.PVC.name}"
+  onDelete: delete
+  archiveOnDelete: "false"' > deploy/storageclass-registry.yaml
+
+59. Deploy the NFS Provisioner Deployment for OpenShift Registry and Registry Storage Class
+oc create -f deploy/deployment-registry.yaml -f deploy/storageclass-registry.yaml
+
+60. Test the NFS Provisioner with Registry
+cp deploy/test-claim.yaml deploy/test-claim-registry.yaml
+cp deploy/test-pod.yaml deploy/test-pod-registry.yaml
+
+sed -i'' "s|name: test-claim|name: test-claim-registry|g" ./deploy/test-claim-registry.yaml
+sed -i'' "s|storageClassName: nfs-client|storageClassName: registry-nfs-storage|g" ./deploy/test-claim-registry.yaml
+
+sed -i'' "s|name: test-pod|name: test-pod-registry|g" ./deploy/test-pod-registry.yaml
+sed -i'' "s|name: nfs-pvc|name: test-nfs-pvc-registry|g" ./deploy/test-pod-registry.yaml
+sed -i'' "s|claimName: test-claim|claimName: test-claim-registry|g" ./deploy/test-pod-registry.yaml
+
+oc create -f deploy/test-claim-registry.yaml -f deploy/test-pod-registry.yaml
+Verify
+oc delete -f deploy/test-claim-registry.yaml -f deploy/test-pod-registry.yaml
+
+
+61. Set the Image Registry to Managed
+    oc patch configs.imageregistry.operator.openshift.io cluster --type merge --patch '{"spec":{"managementState":"Managed"}}'
+    #oc patch configs.imageregistry.operator.openshift.io cluster --type merge --patch '{"spec":{"managementState":"Removed"}}'
+    oc patch config.imageregistry.operator.openshift.io/cluster --type=merge -p '{"spec":{"rolloutStrategy":"Recreate","replicas":1}}'
+
+62. Create the PVC for the Image Registry
+cd ..
+oc project openshift-image-registry
+
+echo 'apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: image-registry-storage
+  namespace: openshift-image-registry
 spec:
-  capacity:
-    storage: 100Gi
+  storageClassName: registry-nfs-storage
   accessModes:
     - ReadWriteMany
-  persistentVolumeReclaimPolicy: Recycle
-  storageClassName: nfs
-  nfs:
-    path: /exports/registry
-    server: 192.168.2.25
+  resources:
+    requests:
+        storage: 100Gi' > imageregistry-pvc.yaml
 
-51. Setup the PVC for the Image Registry
+oc create -f imageregistry-pvc.yaml
+
+63. Setup the PVC for the Image Registry
     oc edit configs.imageregistry.operator.openshift.io
     storage:
       pvc:
-        claim:
-52. Check the PVC for the Image Registry Status
+        claim: image-registry-storage
+64. Check the PVC for the Image Registry Status
     oc get pvc -n openshift-image-registry
 
+65.  Create an NFS Provisioner Deployment for OpenShift Storage - General Use
+cd nfs-subdir-external-provisioner
+cp deploy/deployment.yaml deploy/deployment-managed.yaml
+
+#Using sed | delimitter instead of / 
+NFSCLIENTNAME=nfs-client-provisioner-managed
+sed -i'' "s|name: nfs-client-provisioner|name: $NFSCLIENTNAME|g" ./deploy/deployment-managed.yaml
+sed -i'' "s|app: nfs-client-provisioner|app: $NFSCLIENTNAME|g" ./deploy/deployment-managed.yaml
+
+#Using sed | delimtter instead of /
+STORAGECLASS=managed-nfs-storage
+sed -i'' "s|value: k8s-sigs.io/nfs-subdir-external-provisioner|value: k8s-sigs.io/$STORAGECLASS|g" ./deploy/deployment-managed.yaml
+
+#Using sed | delimitter instead of / 
+NFSSERVER=ocpnfs.example.com
+sed -i'' "s|value: 10.3.243.101|value: $NFSSERVER|g" ./deploy/deployment-managed.yaml
+sed -i'' "s|server: 10.3.243.101|server: $NFSSERVER|g" ./deploy/deployment-managed.yaml
+
+#Using sed | delimitter instead of / 
+NFSPATH=/exports/share
+sed -i'' "s|value: /ifs/kubernetes|value: $NFSPATH|g" ./deploy/deployment-managed.yaml
+sed -i'' "s|path: /ifs/kubernetes|path: $NFSPATH|g" ./deploy/deployment-managed.yaml
+
+66. Create a Storage Class for OpenShift Storage - General Use
+echo 'apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: managed-nfs-storage
+provisioner: k8s-sigs.io/managed-nfs-storage
+parameters:
+  pathPattern: "${.PVC.namespace}/${.PVC.name}"
+  onDelete: delete
+  archiveOnDelete: "false"' > deploy/storageclass-managed.yaml
+
+67. Deploy the NFS Provisioner Deployment for OpenShift Managed and Managed Storage Class
+oc project openshift-nfs-storage
+oc create -f deploy/deployment-managed.yaml -f deploy/storageclass-managed.yaml
+
+68. Test the NFS Provisioner with Registry
+cp deploy/test-claim.yaml deploy/test-claim-managed.yaml
+cp deploy/test-pod.yaml deploy/test-pod-managed.yaml
+
+sed -i'' "s|name: test-claim|name: test-claim-managed|g" ./deploy/test-claim-managed.yaml
+sed -i'' "s|storageClassName: nfs-client|storageClassName: managed-nfs-storage|g" ./deploy/test-claim-managed.yaml
+
+sed -i'' "s|name: test-pod|name: test-pod-managed|g" ./deploy/test-pod-managed.yaml
+sed -i'' "s|name: nfs-pvc|name: test-nfs-pvc-managed|g" ./deploy/test-pod-managed.yaml
+sed -i'' "s|claimName: test-claim|claimName: test-claim-managed|g" ./deploy/test-pod-managed.yaml
+
+oc create -f deploy/test-claim-managed.yaml -f deploy/test-pod-managed.yaml
+Verify
+oc delete -f deploy/test-claim-managed.yaml -f deploy/test-pod-managed.yaml
+
+69. Set the Default Storage Class to OpenShift Storage - General Use
+oc patch storageclass managed-nfs-storage -p '{"metadata": {"annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}'
 
 
-00:50:56:a8:aa:a1
-22.20 - 23
-22.11 - 13
+#Set the Identity Provider OAuth to Active Directory
+1. login to console
+2. Click Administration -> Cluster Settings
+3. Click OAuth
+4. Select LDAP from the drop-down of Identity Providers
+5. 
 
-kubeadmin
-qsAYh-mpGSi-wjAw7-PzANn
+

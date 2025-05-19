@@ -1,0 +1,10 @@
+https://www.ibm.com/docs/en/SSYHZ8_23.0.2/com.ibm.dba.install/op_topics/tsk_installing_cp4ba_starter.html
+
+https://www.ibm.com/docs/en/cloud-paks/cp-biz-automation/23.0.2?topic=installing-starter-deployments
+
+https://www.ibm.com/docs/en/cloud-paks/cp-biz-automation/23.0.2?topic=cpd-option-1-installing-production-deployment-in-openshift-console
+
+https://www.ibm.com/docs/en/cloud-paks/cp-biz-automation/23.0.2?topic=manager-completing-post-deployment-tasks
+
+https://www.ibm.com/docs/en/cloud-paks/cp-biz-automation/23.0.2?topic=deployments-installing-cp4ba-multi-pattern-starter-deployment
+

@@ -275,10 +275,11 @@ ansible-playbook -e @vars.yaml tasks/main.yml --become
 helpernodecheck install-info
 
 3. Copy the Web Files to the Apache Server on the Helper Node
-sudo cp /tmp/rhcos* /var/www/html/install/
+sudo cp -f /tmp/rhcos* /var/www/html/install/
+sudo cp -f /tmp/bios* /var/www/html/install/
 
 4. Verify the SSH keys were created - helper_rsa & helper_rsa.pub
-ls ~/.ssh
+ls -al ~/.ssh
 
 *******************************************************
 OpenShift Install
@@ -299,7 +300,7 @@ baseDomain: example.com
 compute:
 - hyperthreading: Enabled
   name: worker
-  replicas: 0
+  replicas: 1
 controlPlane:
   hyperthreading: Enabled
   name: master
@@ -329,6 +330,15 @@ mkdir install-ocp4dvst
 26. Move install-config.yaml to install-<cluster-id> directory
 mv install-config.yaml install-<cluster-id>/
 mv install-config.yaml install-ocp4dvst/
+
+27. (Optional) If doing IPI - add the vCenter Root Certs to ca-trust of LB / Helper Node
+Download vCenter Root CA certs from https://<vcenter url>
+Right click download root ca certs on the lower right
+Extract zip
+Copy to LB / Helper Node openshift directory
+sudo cp certs/lin/* /etc/pki/ca-trust/source/anchors/ (For RHEL Based Systems)
+sudo update-ca-trust
+
 
 27. Create OpenShift Install Manifests
 openshift-install create manifests --dir install-ocp4dvst
@@ -370,10 +380,10 @@ vim inventory.yml
 -update master1, master2, master3 server names and ip
 
 33. Update web files for ISO Maker - sudo
-sudo cp /var/www/html/install/bios.raw.gz /var/www/html/
-sudo cp /var/www/html/ignition/*.ign /var/www/html/
-sudo ln -s /var/www/html/worker.ign /var/www/html/workers.ign
-sudo ln -s /var/www/html/master.ign /var/www/html/masters.ign
+sudo cp -f /var/www/html/install/bios.raw.gz /var/www/html/
+sudo cp -f /var/www/html/ignition/*.ign /var/www/html/
+sudo ln -sf /var/www/html/worker.ign /var/www/html/workers.ign
+sudo ln -sf /var/www/html/master.ign /var/www/html/masters.ign
 sudo chmod o+r /var/www/html/*
 sudo restorecon -vR /var/www/html
 
@@ -386,8 +396,17 @@ ansible-playbook playbook-single.yml -K
 ansible-playbook playbook-multi.yml -K
 
 35. Load the ISOs into their respective VMs and reboot the VMs
+    Make sure ALL VMs have powered on completely and updated themselves to the point they are at a login prompt
+
 36. Launch the openshift-install bootstrap process
 openshift-install --dir install-ocp4dvst wait-for bootstrap-complete --log-level debug
+
+37. Check the Bootstrap Installation Status
+ssh -i ~/.ssh/ocp4 core@bootstrap.ocp4.example.com
+journalctl -b -f -u release-image.service -u bootkube.service
+
+38. Check the Other Servers by logging in
+ssh -i ~/.ssh/ocp4 core@master0.ocp4.example.com
 
 37. After bootstrap is complete
 export KUBECONFIG=$(pwd)/install-ocp4/auth/kubeconfig
@@ -397,6 +416,53 @@ oc get nodes
 oc get co
 oc get csr
 
+
+LDAP Identity Info from WebSphere
+CMERS.COM 636
+
+CN=devappacct,OU=Clarety,DC=cmers,DC=com
+S0meThingOth3r$Th1nk
+
+User Filter
+(&(sAMAccountName=%v)(objectcategory=user))
+
+Group Filter
+(&(cn=%v)(objectcategory=group))
+
+User ID Map
+user:sAMAccountName
+
+Group ID Map
+*:cn
+
+Group member ID Map
+memberof:member
+
+#Home OCP ocp4.example.com - https://console-openshift-console.apps.ocp4.example.com/
+kubeadmin
+wCLGy-WFA4Y-rAtZo-8ZZsz
+
+
+#MKE OCP
+kubeadmin
+3WSoH-USqSk-kzA6f-gmnWB
+
+chamil user password
+HereistheOneforToday0508
+
+
+#CloudPak Keys for Container Catalog
+
+#Use at Home
+eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJJQk0gTWFya2V0cGxhY2UiLCJpYXQiOjE3MjQxNjMyMzEsImp0aSI6ImVjODdmYTA0MmQ1MjRmNjA5YTIwMTc0YzFhYzg4OTk2In0.a0ObR6SN331DgJB3Xa9d0eUlb_bo_-eG4caebQicCko
+
+#Use at MKE
+eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJJQk0gTWFya2V0cGxhY2UiLCJpYXQiOjE3MjQxNjMwODIsImp0aSI6IjM4MjgyZWNiMWU4NDRiMjVhNTQ4MTlhZTI1YjY5NjFjIn0.g6w5eSsTNYIkCuac5EYEKBYB2aYysOsNQSVVOWl1PAc
+
+#Peraton
+https://sso.peraton.com
+
+1-833-994-2449
 
 
 
